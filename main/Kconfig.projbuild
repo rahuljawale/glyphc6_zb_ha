@@ -1,0 +1,31 @@
+menu "Glyph C6 Monitor Configuration"
+
+    config BLINK_PERIOD_MS
+        int "Blink period in milliseconds"
+        default 1000
+        range 100 10000
+        help
+            Define the LED blink period in milliseconds.
+
+    config ENABLE_ZIGBEE
+        bool "Enable Zigbee support"
+        default n
+        help
+            Enable Zigbee connectivity for the AC power monitor.
+
+    config ZIGBEE_CHANNEL
+        int "Zigbee channel"
+        depends on ENABLE_ZIGBEE
+        default 11
+        range 11 26
+        help
+            Zigbee channel (11-26).
+
+    config ZIGBEE_PANID
+        hex "Zigbee PAN ID"
+        depends on ENABLE_ZIGBEE
+        default 0x1a62
+        help
+            Zigbee PAN ID in hex format.
+
+endmenu

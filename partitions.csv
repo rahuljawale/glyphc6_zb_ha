@@ -1,0 +1,8 @@
+# ESP-IDF Partition Table with Core Dump Support
+# Name, Type, SubType, Offset, Size, Flags
+nvs,      data, nvs,     0x9000,  0x6000,
+phy_init, data, phy,     0xf000,  0x1000,
+factory,  app,  factory, 0x10000, 0x100000,
+coredump, data, coredump, 0x110000, 64K,
+zb_storage, data, fat,   0x120000, 16K,
+zb_fct, data, fat,       0x130000, 1K,
