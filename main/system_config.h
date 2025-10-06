@@ -49,6 +49,38 @@
 #define ADC_A5                  GPIO_NUM_4
 
 // ============================================================================
+// BATTERY MONITORING CONFIGURATION (from Glyph C6 schematic)
+// ============================================================================
+
+// Battery ADC Configuration
+// GPIO_12 (BATT_MSR) - from schematic header section
+#define BATT_MSR_GPIO           GPIO_NUM_12
+#define BATT_MSR_ADC_UNIT       ADC_UNIT_1
+#define BATT_MSR_ADC_CHANNEL    ADC_CHANNEL_0     // GPIO12 = ADC1_CH0 on ESP32-C6
+#define BATT_MSR_ADC_ATTEN      ADC_ATTEN_DB_12   // 0-3.3V range
+#define BATT_MSR_ADC_BITWIDTH   ADC_BITWIDTH_12
+
+// Battery Voltage Divider (from schematic: R10=200kΩ, R11=200kΩ)
+// BATT → R10 (200k) → BATT_MSR (to ADC) → R11 (200k) → GND
+#define BATT_R1                 200000.0f         // 200kΩ upper resistor (R10)
+#define BATT_R2                 200000.0f         // 200kΩ lower resistor (R11)
+#define BATT_VOLTAGE_DIVIDER    ((BATT_R1 + BATT_R2) / BATT_R2)  // 2.0x
+#define BATT_ADC_TO_VOLTAGE(mv) ((mv / 1000.0f) * BATT_VOLTAGE_DIVIDER)
+
+// Battery Voltage Thresholds (LiPo)
+#define BATT_VOLTAGE_MAX        4.2f              // Fully charged
+#define BATT_VOLTAGE_MIN        3.0f              // Empty/cutoff
+#define BATT_VOLTAGE_LOW        3.4f              // Low battery warning
+
+// Battery Sampling
+#define BATTERY_SAMPLES_AVG     10                // Number of ADC samples to average
+#define BATTERY_READ_INTERVAL   60000             // 60 seconds between reads
+
+// Battery Thresholds
+#define BATTERY_LOW_PERCENT     20.0f             // Below this = low battery
+#define BATTERY_FULL_PERCENT    99.0f             // Above this = full
+
+// ============================================================================
 // ZIGBEE CONFIGURATION
 // ============================================================================
 
@@ -72,11 +104,20 @@
 
 // Task Stack Sizes (INCREASED for stability)
 #define MONITORING_TASK_STACK   4096
-#define ZIGBEE_TASK_STACK      8192  // DOUBLED - Zigbee stack needs more space
+#define BATTERY_TASK_STACK      4096  // INCREASED - ADC + logging needs more space
+#define ZIGBEE_TASK_STACK       8192  // DOUBLED - Zigbee stack needs more space
 
 // Task Priorities
 #define MONITORING_TASK_PRIORITY 5
-#define ZIGBEE_TASK_PRIORITY    6
+#define BATTERY_TASK_PRIORITY    4
+#define ZIGBEE_TASK_PRIORITY     6
+
+// ============================================================================
+// THREAD SAFETY CONFIGURATION
+// ============================================================================
+
+// Mutex Timeout Values
+#define BATTERY_MUTEX_TIMEOUT_MS 100
 
 #endif // SYSTEM_CONFIG_H
 

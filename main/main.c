@@ -54,15 +54,49 @@
 // Project modules
 #include "system_config.h"
 #include "zigbee_core.h"
+#include "battery_monitoring.h"
+
+// Define missing Power Config cluster attribute IDs (not in ESP Zigbee SDK headers)
+#ifndef ESP_ZB_ZCL_ATTR_POWER_CONFIG_BATTERY_PERCENTAGE_REMAINING_ID
+#define ESP_ZB_ZCL_ATTR_POWER_CONFIG_BATTERY_PERCENTAGE_REMAINING_ID        0x0021
+#endif
+
+#ifndef ESP_ZB_ZCL_ATTR_POWER_CONFIG_BATTERY_VOLTAGE_ID
+#define ESP_ZB_ZCL_ATTR_POWER_CONFIG_BATTERY_VOLTAGE_ID                     0x0020
+#endif
 
 static const char *TAG = "GLYPH_C6";
 
+// LED state tracking
+static bool led_state = false;
+
 /**
- * @brief Initialize GPIO pins (NeoPixel/I2C power only)
+ * @brief Set LED state
+ */
+static void set_led(bool state)
+{
+    led_state = state;
+    gpio_set_level(GPIO_NUM_14, state ? 1 : 0);
+    ESP_LOGI(TAG, "LED: %s", state ? "ON 💡" : "OFF");
+}
+
+/**
+ * @brief Initialize GPIO pins (LED + NeoPixel/I2C power)
  */
 static void gpio_init(void)
 {
     ESP_LOGI(TAG, "Initializing GPIO pins...");
+
+    // Configure LED (GPIO14) as output
+    gpio_config_t led_conf = {
+        .pin_bit_mask = (1ULL << GPIO_NUM_14),
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    gpio_config(&led_conf);
+    gpio_set_level(GPIO_NUM_14, 0);  // LED off initially
 
     // Configure NeoPixel/I2C power pin as output and set HIGH
     gpio_config_t power_conf = {
@@ -76,26 +110,101 @@ static void gpio_init(void)
     gpio_set_level(NEOPIXEL_I2C_POWER, 1);  // Enable NeoPixel and I2C power
     
     ESP_LOGI(TAG, "GPIO initialization complete");
-    ESP_LOGI(TAG, "NeoPixel/I2C Power: GPIO%d (enabled)", NEOPIXEL_I2C_POWER);
+    ESP_LOGI(TAG, "LED: GPIO14 (off) - controlled via Z2M");
+    ESP_LOGI(TAG, "NeoPixel/I2C Power: GPIO20 (enabled)");
 }
 
 // ============================================================================
-// STATUS MONITORING TASK (replaces LED blink)
+// ZIGBEE ATTRIBUTE REPORTING
 // ============================================================================
 
 /**
- * @brief Status monitoring task (logs Zigbee status)
+ * @brief Report battery data to Zigbee (called via scheduler for safety)
+ */
+static void scheduled_battery_report(uint8_t param)
+{
+    (void)param;  // Unused
+    
+    float voltage = 0.0f;
+    float percent = 0.0f;
+    
+    // Get battery data from cache (thread-safe)
+    if (battery_get_cached_data(&voltage, &percent)) {
+        // Report battery percentage (Zigbee uses 0-200 scale, 0.5% units)
+        uint16_t battery_percent_raw = (uint16_t)(percent * 2.0f);
+        uint8_t battery_percent = (battery_percent_raw <= 200) ? (uint8_t)battery_percent_raw : 200;
+        
+        // Update attribute value (Z2M will poll via binding)
+        esp_zb_zcl_status_t status = esp_zb_zcl_set_attribute_val(
+            HA_ESP_SENSOR_ENDPOINT,
+            ESP_ZB_ZCL_CLUSTER_ID_POWER_CONFIG,
+            ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
+            ESP_ZB_ZCL_ATTR_POWER_CONFIG_BATTERY_PERCENTAGE_REMAINING_ID,
+            &battery_percent,
+            false  // false = update value, let binding handle reporting
+        );
+        
+        if (status != ESP_ZB_ZCL_STATUS_SUCCESS) {
+            ESP_LOGW(TAG, "Failed to set battery percentage: %d", status);
+        }
+        
+        // Report battery voltage (Convert to decisvolts, 0.1V units)
+        uint16_t battery_voltage_raw = (uint16_t)(voltage * 10.0f);
+        if (battery_voltage_raw <= 255) {
+            uint8_t battery_voltage_dv = (uint8_t)battery_voltage_raw;
+            status = esp_zb_zcl_set_attribute_val(
+                HA_ESP_SENSOR_ENDPOINT,
+                ESP_ZB_ZCL_CLUSTER_ID_POWER_CONFIG,
+                ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
+                ESP_ZB_ZCL_ATTR_POWER_CONFIG_BATTERY_VOLTAGE_ID,
+                &battery_voltage_dv,
+                false  // false = update value, let binding handle reporting
+            );
+            
+            if (status != ESP_ZB_ZCL_STATUS_SUCCESS) {
+                ESP_LOGW(TAG, "Failed to set battery voltage: %d", status);
+            }
+        }
+        
+        ESP_LOGI(TAG, "Battery attributes updated: %.2fV (%.1f%%) - percent=%d, voltage_dv=%d (Z2M will poll)", 
+                 voltage, percent, battery_percent, (uint8_t)(voltage * 10.0f));
+    }
+}
+
+// ============================================================================
+// STATUS MONITORING TASK
+// ============================================================================
+
+/**
+ * @brief Status monitoring task (logs Zigbee, LED, and Battery status)
  */
 static void status_task(void *pvParameters)
 {
-    ESP_LOGI(TAG, "Starting status monitoring task");
+    ESP_LOGI(TAG, "Starting status monitoring task with battery reporting");
+    TickType_t last_battery_report = 0;
+    const TickType_t battery_report_interval = pdMS_TO_TICKS(60000);  // 1 minute
     
     while (1) {
+        TickType_t now = xTaskGetTickCount();
+        float voltage = 0.0f, percent = 0.0f;
+        bool battery_valid = battery_get_cached_data(&voltage, &percent);
+        bool usb_present = battery_is_usb_present();
+        const char *power_source = usb_present ? "USB⚡" : "BAT🔋";
+        
         if (zigbee_core_is_joined()) {
-            ESP_LOGI(TAG, "Status: Zigbee JOINED ✅");
+            ESP_LOGI(TAG, "Status: Zigbee JOINED ✅ | LED: %s | Power: %s %.2fV (%.1f%%)", 
+                     led_state ? "ON 💡" : "OFF", power_source, voltage, percent);
+            
+            // Schedule battery report via Zigbee scheduler (safe from task context)
+            if ((now - last_battery_report) >= battery_report_interval && battery_valid) {
+                esp_zb_scheduler_alarm(scheduled_battery_report, 0, 10);  // 10ms delay
+                last_battery_report = now;
+            }
         } else {
-            ESP_LOGI(TAG, "Status: Zigbee SEARCHING... 🔍");
+            ESP_LOGI(TAG, "Status: Zigbee SEARCHING... 🔍 | LED: %s | Power: %s %.2fV (%.1f%%)", 
+                     led_state ? "ON 💡" : "OFF", power_source, voltage, percent);
         }
+        
         vTaskDelay(pdMS_TO_TICKS(5000));  // Log every 5 seconds
     }
 }
@@ -105,7 +214,7 @@ static void status_task(void *pvParameters)
 // ============================================================================
 
 /**
- * @brief Zigbee attribute handler (minimal - no LED control)
+ * @brief Zigbee attribute handler (with LED control from Z2M/HA)
  */
 static esp_err_t zb_attribute_handler(const esp_zb_zcl_set_attr_value_message_t *message)
 {
@@ -117,6 +226,21 @@ static esp_err_t zb_attribute_handler(const esp_zb_zcl_set_attr_value_message_t 
     
     ESP_LOGI(TAG, "Received attribute change (endpoint:%d, cluster:0x%04x, attr:0x%04x)", 
              message->info.dst_endpoint, message->info.cluster, message->attribute.id);
+    
+    // Handle On/Off cluster for LED control from Z2M/HA
+    if (message->info.dst_endpoint == HA_ESP_SENSOR_ENDPOINT &&
+        message->info.cluster == ESP_ZB_ZCL_CLUSTER_ID_ON_OFF) {
+        
+        if (message->attribute.id == ESP_ZB_ZCL_ATTR_ON_OFF_ON_OFF_ID &&
+            message->attribute.data.type == ESP_ZB_ZCL_ATTR_TYPE_BOOL) {
+            
+            bool new_state = message->attribute.data.value ? 
+                            *(bool *)message->attribute.data.value : false;
+            
+            ESP_LOGI(TAG, "Remote control from Z2M/HA: LED %s", new_state ? "ON" : "OFF");
+            set_led(new_state);
+        }
+    }
     
     return ret;
 }
@@ -221,12 +345,30 @@ void app_main(void)
     ESP_LOGI(TAG, "Waiting for Zigbee main loop to stabilize...");
     vTaskDelay(pdMS_TO_TICKS(100));
 
+    // Initialize battery monitoring
+    ESP_LOGI(TAG, "Initializing battery monitoring...");
+    esp_err_t battery_ret = battery_monitoring_init();
+    if (battery_ret == ESP_OK) {
+        ESP_LOGI(TAG, "Battery monitoring initialized successfully");
+        
+        // Start battery monitoring task
+        battery_ret = battery_monitoring_start_task();
+        if (battery_ret == ESP_OK) {
+            ESP_LOGI(TAG, "Battery monitoring task started");
+        } else {
+            ESP_LOGW(TAG, "Failed to start battery monitoring task: %s", esp_err_to_name(battery_ret));
+        }
+    } else {
+        ESP_LOGW(TAG, "Failed to initialize battery monitoring: %s", esp_err_to_name(battery_ret));
+    }
+
     // Create status monitoring task
-    xTaskCreate(status_task, "status_task", 2048, NULL, 5, NULL);
+    xTaskCreate(status_task, "status_task", 4096, NULL, 5, NULL);
     ESP_LOGI(TAG, "Status monitoring task started");
 
     ESP_LOGI(TAG, "Application started successfully");
     ESP_LOGI(TAG, "Free heap: %lu bytes", esp_get_free_heap_size());
     ESP_LOGI(TAG, "Zigbee device ready for commissioning");
-    ESP_LOGI(TAG, "Use Zigbee2MQTT or Home Assistant to pair this device");
+    ESP_LOGI(TAG, "Use Zigbee2MQTT or Home Assistant to pair and control LED");
+    ESP_LOGI(TAG, "Battery reporting enabled every 60 seconds");
 }

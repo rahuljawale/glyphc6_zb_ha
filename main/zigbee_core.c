@@ -14,6 +14,15 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+// Define missing Power Config cluster attribute IDs (not in ESP Zigbee SDK headers)
+#ifndef ESP_ZB_ZCL_ATTR_POWER_CONFIG_BATTERY_PERCENTAGE_REMAINING_ID
+#define ESP_ZB_ZCL_ATTR_POWER_CONFIG_BATTERY_PERCENTAGE_REMAINING_ID        0x0021
+#endif
+
+#ifndef ESP_ZB_ZCL_ATTR_POWER_CONFIG_BATTERY_VOLTAGE_ID
+#define ESP_ZB_ZCL_ATTR_POWER_CONFIG_BATTERY_VOLTAGE_ID                     0x0020
+#endif
+
 static const char *TAG = "ZIGBEE_CORE";
 
 // ============================================================================
@@ -224,6 +233,30 @@ esp_err_t zigbee_core_set_initial_attributes(void)
         ESP_LOGW(TAG, "Setting device enabled attribute failed!");
     }
     
+    // Set battery percentage attribute
+    status = esp_zb_zcl_set_attribute_val(
+        HA_ESP_SENSOR_ENDPOINT,
+        ESP_ZB_ZCL_CLUSTER_ID_POWER_CONFIG,
+        ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
+        ESP_ZB_ZCL_ATTR_POWER_CONFIG_BATTERY_PERCENTAGE_REMAINING_ID,
+        &(uint8_t){0}, false);
+    if (status != ESP_ZB_ZCL_STATUS_SUCCESS) {
+        ESP_LOGW(TAG, "Setting battery percentage attribute failed!");
+    }
+    
+    // Set battery voltage attribute
+    status = esp_zb_zcl_set_attribute_val(
+        HA_ESP_SENSOR_ENDPOINT,
+        ESP_ZB_ZCL_CLUSTER_ID_POWER_CONFIG,
+        ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
+        ESP_ZB_ZCL_ATTR_POWER_CONFIG_BATTERY_VOLTAGE_ID,
+        &(uint8_t){0}, false);
+    if (status != ESP_ZB_ZCL_STATUS_SUCCESS) {
+        ESP_LOGW(TAG, "Setting battery voltage attribute failed!");
+    } else {
+        ESP_LOGI(TAG, "Battery attributes initialized successfully");
+    }
+    
     ESP_LOGI(TAG, "Initial attributes set");
     return ESP_OK;
 }
@@ -263,6 +296,35 @@ esp_zb_cluster_list_t *zigbee_core_create_sensor_clusters(
     ESP_ERROR_CHECK(esp_zb_cluster_list_add_identify_cluster(cluster_list, identify_cluster, 
         ESP_ZB_ZCL_CLUSTER_SERVER_ROLE));
     
+    // Power Configuration cluster for battery reporting
+    esp_zb_power_config_cluster_cfg_t power_config_cfg = {
+        .main_voltage = 0xffff,
+    };
+    esp_zb_attribute_list_t *power_config_cluster = esp_zb_power_config_cluster_create(&power_config_cfg);
+    if (!power_config_cluster) {
+        ESP_LOGE(TAG, "Failed to create power config cluster");
+        return NULL;
+    }
+    
+    // Battery voltage with REPORTING access
+    uint8_t battery_voltage_init = 0;
+    uint8_t battery_percentage_init = 0;
+    
+    ESP_ERROR_CHECK(esp_zb_cluster_add_attr(power_config_cluster,
+        ESP_ZB_ZCL_CLUSTER_ID_POWER_CONFIG,
+        ESP_ZB_ZCL_ATTR_POWER_CONFIG_BATTERY_VOLTAGE_ID,
+        ESP_ZB_ZCL_ATTR_TYPE_U8,
+        ESP_ZB_ZCL_ATTR_ACCESS_READ_ONLY | ESP_ZB_ZCL_ATTR_ACCESS_REPORTING,
+        &battery_voltage_init));
+    
+    // Battery percentage
+    ESP_ERROR_CHECK(esp_zb_power_config_cluster_add_attr(power_config_cluster,
+        ESP_ZB_ZCL_ATTR_POWER_CONFIG_BATTERY_PERCENTAGE_REMAINING_ID,
+        &battery_percentage_init));
+    
+    ESP_ERROR_CHECK(esp_zb_cluster_list_add_power_config_cluster(cluster_list, power_config_cluster, 
+        ESP_ZB_ZCL_CLUSTER_SERVER_ROLE));
+    
     // On/Off cluster for remote LED control
     esp_zb_on_off_cluster_cfg_t on_off_cfg = {
         .on_off = ESP_ZB_ZCL_ON_OFF_ON_OFF_DEFAULT_VALUE,
@@ -275,7 +337,7 @@ esp_zb_cluster_list_t *zigbee_core_create_sensor_clusters(
     ESP_ERROR_CHECK(esp_zb_cluster_list_add_on_off_cluster(cluster_list, on_off_cluster, 
         ESP_ZB_ZCL_CLUSTER_SERVER_ROLE));
     
-    ESP_LOGI(TAG, "All clusters created successfully");
+    ESP_LOGI(TAG, "All clusters created successfully (Basic, Identify, PowerConfig, OnOff)");
     return cluster_list;
 }
 
