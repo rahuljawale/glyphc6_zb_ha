@@ -22,7 +22,7 @@ const definition = {
     zigbeeModel: ['GLYPH_C6_M1'],
     model: 'GLYPH_C6_M1',
     vendor: 'Custom',
-    description: 'Glyph C6 Zigbee Monitor with LED Control',
+    description: 'Glyph C6 Zigbee Soil Monitor with LED Control',
     
     fromZigbee: [
         // LED On/Off control (0x0006 cluster)
@@ -60,6 +60,36 @@ const definition = {
                 return result;
             },
         },
+        
+        // Soil Moisture as Humidity (0x0405 cluster)
+        {
+            cluster: 'msRelativeHumidity',
+            type: ['attributeReport', 'readResponse'],
+            convert: (model, msg, publish, options, meta) => {
+                const result = {};
+                if (msg.data.measuredValue !== undefined) {
+                    // Zigbee uses 0.01% units (0-10000), convert to 0-100%
+                    result.soil_moisture = msg.data.measuredValue / 100.0;
+                    result.humidity = result.soil_moisture;  // Also expose as humidity for compatibility
+                }
+                return result;
+            },
+        },
+        
+        // Soil Temperature (0x0402 cluster)
+        {
+            cluster: 'msTemperatureMeasurement',
+            type: ['attributeReport', 'readResponse'],
+            convert: (model, msg, publish, options, meta) => {
+                const result = {};
+                if (msg.data.measuredValue !== undefined) {
+                    // Zigbee uses 0.01°C units, convert to °C
+                    result.soil_temperature = msg.data.measuredValue / 100.0;
+                    result.temperature = result.soil_temperature;  // Also expose as temperature
+                }
+                return result;
+            },
+        },
     ],
     
     toZigbee: [
@@ -86,6 +116,12 @@ const definition = {
         // Battery monitoring
         e.battery(),
         e.battery_voltage(),
+        
+        // Soil moisture (as humidity)
+        e.humidity().withDescription('Soil moisture percentage'),
+        
+        // Soil temperature
+        e.temperature().withDescription('Soil temperature'),
     ],
     
     // Configure binding and reporting
@@ -94,7 +130,12 @@ const definition = {
         
         try {
             // Bind clusters
-            await reporting.bind(endpoint, coordinatorEndpoint, ['genOnOff', 'genPowerCfg']);
+            await reporting.bind(endpoint, coordinatorEndpoint, [
+                'genOnOff', 
+                'genPowerCfg', 
+                'msRelativeHumidity', 
+                'msTemperatureMeasurement'
+            ]);
             logger.info('Glyph C6: Binding successful');
             
             // Try to configure reporting (may not be supported)
@@ -125,6 +166,16 @@ const definition = {
             // Read initial states
             await endpoint.read('genOnOff', ['onOff']);
             await endpoint.read('genPowerCfg', ['batteryPercentageRemaining', 'batteryVoltage']);
+            
+            // Read soil sensor states
+            try {
+                await endpoint.read('msRelativeHumidity', ['measuredValue']);
+                await endpoint.read('msTemperatureMeasurement', ['measuredValue']);
+                logger.info('Glyph C6: Soil sensor states read successfully');
+            } catch (e) {
+                logger.warn('Glyph C6: Could not read soil sensor states: ' + e.message);
+            }
+            
             logger.info('Glyph C6: Initial states read successfully');
             
         } catch (error) {

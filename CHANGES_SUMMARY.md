@@ -257,7 +257,7 @@ Based on the `ac_power_monitor` project, the following features can be added:
 
 - ESP-IDF: v5.5+
 - ESP-Zigbee-SDK: Managed by component manager
-- Base project: `/Users/rjawale/GDrive/Tech/esp32_ac_monitor/ac_power_monitor`
+- Base project: Previous AC power monitoring project (refactored for soil monitoring)
 - Target board: Glyph C6 (ESP32-C6-MINI-1)
 
 ## Version History

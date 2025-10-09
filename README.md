@@ -1,6 +1,12 @@
-# Glyph C6 Zigbee Monitor
+# 🌱 Glyph C6 Zigbee Soil Monitor
 
-Zigbee-enabled monitoring project for Glyph C6 board (ESP32-C6-MINI-1 module) with battery monitoring and remote LED control.
+Zigbee-enabled plant monitoring project for Glyph C6 board (ESP32-C6-MINI-1 module) with soil moisture/temperature sensing, battery monitoring, and remote LED control via Home Assistant.
+
+## 📋 Project Documentation
+
+- **[ROADMAP.md](ROADMAP.md)** - Complete 3-phase development plan, power consumption analysis, and implementation details
+- **[BUILD_AND_TEST.md](BUILD_AND_TEST.md)** - Build instructions and test results
+- **Current Status:** Phase 2 Complete ✅ - Phase 2.5 Hardware Validation 🏃
 
 ## Hardware
 
@@ -21,9 +27,10 @@ Based on Adafruit ESP32-C6 Feather pinout:
 - `GPIO20`: NeoPixel/I2C Power (must be HIGH for I2C and NeoPixel)
 
 ### Communication Interfaces
-- **I2C (STEMMA QT)**:
-  - `GPIO19`: SDA (5kΩ pullup)
-  - `GPIO18`: SCL (5kΩ pullup)
+- **I2C (STEMMA QT)** - Connected to Adafruit 4026 Soil Sensor:
+  - `GPIO4`: SDA (5kΩ pullup)
+  - `GPIO5`: SCL (5kΩ pullup)
+  - `GPIO20`: Power control (must be HIGH for I2C operation)
 
 - **UART**:
   - `GPIO16`: TX
@@ -98,8 +105,12 @@ idf.py -p PORT erase-flash
 glyphc6_zb_ha/
 ├── CMakeLists.txt              # Root CMake file
 ├── README.md                   # This file
+├── ROADMAP.md                  # 3-phase development roadmap
+├── BUILD_AND_TEST.md           # Build instructions and tests
 ├── sdkconfig.defaults          # Default SDK configuration
 ├── partitions.csv              # Flash partition table
+├── z2m/
+│   └── glyph_c6_converter.js   # Zigbee2MQTT external converter
 └── main/
     ├── CMakeLists.txt          # Main component CMake
     ├── idf_component.yml       # Component dependencies
@@ -109,14 +120,28 @@ glyphc6_zb_ha/
     ├── zigbee_core.h           # Zigbee core header
     ├── battery_monitoring.c    # Battery voltage/percentage monitoring
     ├── battery_monitoring.h    # Battery monitoring header
+    ├── soil_sensor.c           # Adafruit STEMMA Soil Sensor driver
+    ├── soil_sensor.h           # Soil sensor header
     └── system_config.h         # System-wide configuration
 ```
 
 ## Current Features
 
+- ✅ **Soil Monitoring** (NEW!)
+  - Adafruit STEMMA Soil Sensor (4026) integration
+  - Capacitive moisture sensing (0-100%)
+  - Temperature measurement (°C and °F)
+  - Automatic readings every 60 seconds
+  - Status classification (Critical, Low, Good, High, Saturated)
+  - Auto-recovery on sensor failures
+  - Seesaw I2C protocol implementation
+  
 - ✅ **Zigbee Integration**
   - Simple Sensor device (HA_ESP_SENSOR_ENDPOINT)
-  - On/Off cluster for remote LED control
+  - Temperature Measurement cluster (0x0402) - Soil temperature
+  - Relative Humidity cluster (0x0405) - Soil moisture
+  - Power Configuration cluster (0x0001) - Battery monitoring
+  - On/Off cluster (0x0006) - LED control
   - Network steering with automatic retry
   - Persistent network credentials (NVRAM)
   
@@ -132,11 +157,12 @@ glyphc6_zb_ha/
   - On/Off commands from Z2M
   
 - ✅ **System Features**
-  - GPIO initialization (LED, NeoPixel/I2C power)
+  - GPIO initialization (LED, I2C power control)
+  - GPIO20 power management for I2C sensors
   - Basic system information logging
   - NVS (Non-Volatile Storage) initialization
   - FreeRTOS task management
-  - 10dBm TX power for stability with USB power
+  - 10dBm TX power for stability
 
 ## Configuration Options
 
@@ -175,27 +201,96 @@ idf.py build
 
 ## Zigbee2MQTT Integration
 
-To use this device with Zigbee2MQTT:
+This device requires a custom external converter for full functionality.
 
-1. **Enable pairing mode** in Zigbee2MQTT
-2. **Power on** the Glyph C6 device
-3. **Wait for pairing** - device will show "Zigbee JOINED ✅" in logs
-4. **Add custom converter** (if needed):
-   - The device uses model ID `GLYPH_C6_M1`
-   - You may need to create a custom Z2M converter for full functionality
-   - Exposes: LED switch, battery percentage, battery voltage
+### Setup Instructions
 
-## Future Enhancements
+1. **Copy the converter file:**
+   ```bash
+   cp z2m/glyph_c6_converter.js /path/to/zigbee2mqtt/data/
+   ```
 
-1. Add temperature/humidity sensor support
-2. Implement current/power monitoring
-3. Add OTA (Over-The-Air) update support
-4. Implement deep sleep for battery optimization
-5. Add NeoPixel status indicators
+2. **Edit Zigbee2MQTT `configuration.yaml`:**
+   ```yaml
+   external_converters:
+     - glyph_c6_converter.js
+   ```
+
+3. **Restart Zigbee2MQTT:**
+   ```bash
+   docker restart zigbee2mqtt
+   # or
+   systemctl restart zigbee2mqtt
+   ```
+
+4. **Pair the device:**
+   - Enable pairing mode in Zigbee2MQTT web UI
+   - Power on the Glyph C6 device
+   - Wait for "Zigbee JOINED ✅" in serial logs
+   - Device will appear in Z2M with all sensors
+
+### Exposed Entities in Home Assistant
+
+- `sensor.glyph_c6_humidity` - Soil moisture (0-100%)
+- `sensor.glyph_c6_temperature` - Soil temperature (°C)
+- `sensor.glyph_c6_battery` - Battery percentage
+- `sensor.glyph_c6_battery_voltage` - Battery voltage (mV)
+- `switch.glyph_c6` - LED control
+
+## Future Enhancements (Phase 3)
+
+See [ROADMAP.md](ROADMAP.md) for detailed implementation plans.
+
+### Phase 3: Deep Sleep Optimization (Planned)
+
+**Goal:** Achieve 6-18 months of battery life through intelligent power management
+
+#### Phase 3.1: Basic Deep Sleep
+- Configure ESP32-C6 as Zigbee Sleepy End Device
+- Sleep/wake cycle with RTC timer (1-6 hours)
+- Wake → Read → Report → Sleep loop
+- **Target:** 7-8 months battery life (1200mAh)
+
+#### Phase 3.2: Smart Wake Triggers
+- Multiple wake sources (timer, button press)
+- Instant manual wake via BOOT button
+- Emergency wake on critical events
+- **Target:** 6-9 months battery life
+
+#### Phase 3.3: Adaptive Sleep Logic
+- Adjust sleep duration based on soil moisture
+- Critical moisture = check every 15 minutes
+- Good moisture = sleep for 6 hours
+- Battery-aware operation
+- **Target:** 12-18 months battery life
+
+#### Phase 3.4: Ultra-Low Power
+- Minimize wake time to < 3 seconds
+- Optimize sensor read sequence
+- Optional solar charging support
+- **Target:** 18-24 months battery life
+
+### Other Future Ideas
+- Multiple soil sensor support (monitor multiple plants)
+- Calibration system (auto-detect dry/wet values)
+- Local data logging to flash memory
+- OTA (Over-The-Air) firmware updates via Zigbee
+- NeoPixel status indicators
 
 ## References
 
+### Hardware
+- [Glyph C6 Documentation](https://docs.glyphworks.com/glyph-c6)
+- [Adafruit ESP32-C6 Feather Pinout](https://learn.adafruit.com/adafruit-esp32-c6-feather)
+- [Adafruit STEMMA Soil Sensor](https://www.adafruit.com/product/4026)
 - [ESP32-C6 Datasheet](https://www.espressif.com/sites/default/files/documentation/esp32-c6_datasheet_en.pdf)
+
+### Software
 - [ESP-IDF Programming Guide](https://docs.espressif.com/projects/esp-idf/en/latest/esp32c6/)
 - [ESP Zigbee SDK Documentation](https://github.com/espressif/esp-zigbee-sdk)
-- [Adafruit ESP32-C6 Feather Pinout](https://learn.adafruit.com/adafruit-esp32-c6-feather)
+- [Zigbee2MQTT Documentation](https://www.zigbee2mqtt.io/)
+- [Home Assistant Documentation](https://www.home-assistant.io/)
+
+### Project Documentation
+- [ROADMAP.md](ROADMAP.md) - Complete project roadmap and implementation details
+- [BUILD_AND_TEST.md](BUILD_AND_TEST.md) - Build instructions and test results

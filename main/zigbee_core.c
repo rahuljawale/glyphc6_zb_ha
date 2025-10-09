@@ -337,7 +337,37 @@ esp_zb_cluster_list_t *zigbee_core_create_sensor_clusters(
     ESP_ERROR_CHECK(esp_zb_cluster_list_add_on_off_cluster(cluster_list, on_off_cluster, 
         ESP_ZB_ZCL_CLUSTER_SERVER_ROLE));
     
-    ESP_LOGI(TAG, "All clusters created successfully (Basic, Identify, PowerConfig, OnOff)");
+    // Temperature Measurement cluster for soil temperature
+    // Min/Max: -40°C to +80°C in 0.01°C units (-4000 to 8000)
+    esp_zb_temperature_meas_cluster_cfg_t temp_cfg = {
+        .measured_value = ESP_ZB_ZCL_TEMP_MEASUREMENT_MEASURED_VALUE_DEFAULT,
+        .min_value = -4000,  // -40°C
+        .max_value = 8000,   // +80°C
+    };
+    esp_zb_attribute_list_t *temp_cluster = esp_zb_temperature_meas_cluster_create(&temp_cfg);
+    if (!temp_cluster) {
+        ESP_LOGW(TAG, "Failed to create temperature cluster");
+    } else {
+        ESP_ERROR_CHECK(esp_zb_cluster_list_add_temperature_meas_cluster(cluster_list, temp_cluster, 
+            ESP_ZB_ZCL_CLUSTER_SERVER_ROLE));
+    }
+    
+    // Relative Humidity cluster (repurposed for soil moisture)
+    // Min/Max: 0-100% in 0.01% units (0-10000)
+    esp_zb_humidity_meas_cluster_cfg_t humidity_cfg = {
+        .measured_value = ESP_ZB_ZCL_REL_HUMIDITY_MEASUREMENT_MEASURED_VALUE_DEFAULT,
+        .min_value = 0,      // 0%
+        .max_value = 10000,  // 100%
+    };
+    esp_zb_attribute_list_t *humidity_cluster = esp_zb_humidity_meas_cluster_create(&humidity_cfg);
+    if (!humidity_cluster) {
+        ESP_LOGW(TAG, "Failed to create humidity cluster");
+    } else {
+        ESP_ERROR_CHECK(esp_zb_cluster_list_add_humidity_meas_cluster(cluster_list, humidity_cluster, 
+            ESP_ZB_ZCL_CLUSTER_SERVER_ROLE));
+    }
+    
+    ESP_LOGI(TAG, "All clusters created successfully (Basic, Identify, PowerConfig, OnOff, Temperature, Humidity)");
     return cluster_list;
 }
 
@@ -447,6 +477,61 @@ esp_err_t zigbee_core_register_action_handler(esp_err_t (*handler_func)(esp_zb_c
     esp_zb_core_action_handler_register(handler_func);
     ESP_LOGI(TAG, "Action handler registered successfully");
     return ESP_OK;
+}
+
+esp_err_t zigbee_core_update_soil_moisture(float moisture_percent)
+{
+    // Zigbee Humidity is in 0.01% units (0-10000)
+    // Convert from 0-100% to 0-10000
+    uint16_t humidity_value = (uint16_t)(moisture_percent * 100.0f);
+    
+    // Clamp to valid range
+    if (humidity_value > 10000) {
+        humidity_value = 10000;
+    }
+    
+    // Update Zigbee attribute (Humidity cluster ID 0x0405, Measured Value attribute 0x0000)
+    esp_zb_zcl_status_t status = esp_zb_zcl_set_attribute_val(
+        HA_ESP_SENSOR_ENDPOINT,
+        ESP_ZB_ZCL_CLUSTER_ID_REL_HUMIDITY_MEASUREMENT,
+        ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
+        ESP_ZB_ZCL_ATTR_REL_HUMIDITY_MEASUREMENT_VALUE_ID,
+        &humidity_value,
+        false  // Let Z2M poll
+    );
+    
+    if (status == ESP_ZB_ZCL_STATUS_SUCCESS) {
+        ESP_LOGI(TAG, "Soil moisture updated: %.1f%% (ZB value: %d)", moisture_percent, humidity_value);
+        return ESP_OK;
+    } else {
+        ESP_LOGW(TAG, "Failed to update soil moisture: %d", status);
+        return ESP_FAIL;
+    }
+}
+
+esp_err_t zigbee_core_update_soil_temperature(float temp_celsius)
+{
+    // Zigbee Temperature is in 0.01°C units
+    // Convert from Celsius to int16_t (centidegrees)
+    int16_t temp_value = (int16_t)(temp_celsius * 100.0f);
+    
+    // Update Zigbee attribute (Temperature cluster ID 0x0402, Measured Value attribute 0x0000)
+    esp_zb_zcl_status_t status = esp_zb_zcl_set_attribute_val(
+        HA_ESP_SENSOR_ENDPOINT,
+        ESP_ZB_ZCL_CLUSTER_ID_TEMP_MEASUREMENT,
+        ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
+        ESP_ZB_ZCL_ATTR_TEMP_MEASUREMENT_VALUE_ID,
+        &temp_value,
+        false  // Let Z2M poll
+    );
+    
+    if (status == ESP_ZB_ZCL_STATUS_SUCCESS) {
+        ESP_LOGI(TAG, "Soil temperature updated: %.1f°C (ZB value: %d)", temp_celsius, temp_value);
+        return ESP_OK;
+    } else {
+        ESP_LOGW(TAG, "Failed to update soil temperature: %d", status);
+        return ESP_FAIL;
+    }
 }
 
 // ============================================================================

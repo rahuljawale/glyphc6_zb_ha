@@ -55,6 +55,7 @@
 #include "system_config.h"
 #include "zigbee_core.h"
 #include "battery_monitoring.h"
+#include "soil_sensor.h"
 
 // Define missing Power Config cluster attribute IDs (not in ESP Zigbee SDK headers)
 #ifndef ESP_ZB_ZCL_ATTR_POWER_CONFIG_BATTERY_PERCENTAGE_REMAINING_ID
@@ -307,6 +308,11 @@ void app_main(void)
              (chip_info.features & CHIP_FEATURE_EMB_FLASH) ? "embedded" : "external");
     ESP_LOGI(TAG, "Free heap: %lu bytes", esp_get_free_heap_size());
 
+    // Wait for I2C sensors to power up
+    ESP_LOGI(TAG, "");
+    ESP_LOGI(TAG, "Waiting 500ms for I2C devices to power up...");
+    vTaskDelay(pdMS_TO_TICKS(500));  // Give sensors time to boot after GPIO20 enabled
+
     // Initialize Zigbee core system
     ESP_LOGI(TAG, "Initializing Zigbee SDK...");
     
@@ -362,6 +368,24 @@ void app_main(void)
         ESP_LOGW(TAG, "Failed to initialize battery monitoring: %s", esp_err_to_name(battery_ret));
     }
 
+    // Initialize soil sensor
+    ESP_LOGI(TAG, "Initializing soil moisture sensor...");
+    esp_err_t soil_ret = soil_sensor_init();
+    if (soil_ret == ESP_OK) {
+        ESP_LOGI(TAG, "Soil sensor initialized successfully");
+        
+        // Start soil monitoring task
+        soil_ret = soil_sensor_start_task();
+        if (soil_ret == ESP_OK) {
+            ESP_LOGI(TAG, "Soil monitoring task started (reads every 60 seconds)");
+        } else {
+            ESP_LOGW(TAG, "Failed to start soil monitoring task: %s", esp_err_to_name(soil_ret));
+        }
+    } else {
+        ESP_LOGW(TAG, "Soil sensor not found or failed to initialize");
+        ESP_LOGW(TAG, "Continuing without soil monitoring...");
+    }
+
     // Create status monitoring task
     xTaskCreate(status_task, "status_task", 4096, NULL, 5, NULL);
     ESP_LOGI(TAG, "Status monitoring task started");
@@ -370,5 +394,5 @@ void app_main(void)
     ESP_LOGI(TAG, "Free heap: %lu bytes", esp_get_free_heap_size());
     ESP_LOGI(TAG, "Zigbee device ready for commissioning");
     ESP_LOGI(TAG, "Use Zigbee2MQTT or Home Assistant to pair and control LED");
-    ESP_LOGI(TAG, "Battery reporting enabled every 60 seconds");
+    ESP_LOGI(TAG, "Battery & Soil reporting enabled every 60 seconds");
 }

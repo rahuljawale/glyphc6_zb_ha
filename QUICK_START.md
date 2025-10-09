@@ -15,7 +15,7 @@ source ~/.zshrc  # or source ~/.bashrc
 ### 2. Activate ESP-IDF Environment
 ```bash
 # Navigate to project
-cd /Users/rjawale/GDrive/Tech/esp32_ac_monitor/glyph-c6-monitor
+cd glyphc6_zb_ha
 
 # Activate ESP-IDF
 . /opt/esp/esp-idf/export.sh
@@ -129,9 +129,9 @@ export ESP_ZIGBEE_SDK=/opt/esp-zigbee-sdk
 
 ## File Locations
 
-- **Project Root**: `/Users/rjawale/GDrive/Tech/esp32_ac_monitor/glyph-c6-monitor`
-- **ESP-IDF**: `/opt/esp/esp-idf`
-- **Zigbee SDK**: `/opt/esp-zigbee-sdk`
+- **Project Root**: `glyphc6_zb_ha/`
+- **ESP-IDF**: `/opt/esp/esp-idf` (or your ESP-IDF installation path)
+- **Zigbee SDK**: Managed via `idf_component.yml`
 - **Build Output**: `./build/`
 - **Binary File**: `./build/glyph_c6_monitor.bin`
 

@@ -122,5 +122,19 @@ void zigbee_core_app_signal_handler(esp_zb_app_signal_t *signal_struct);
  */
 esp_err_t zigbee_core_register_action_handler(esp_err_t (*handler_func)(esp_zb_core_action_callback_id_t, const void *));
 
+/**
+ * @brief Update soil moisture attribute
+ * @param moisture_percent Moisture percentage (0-100%)
+ * @return ESP_OK on success, error code otherwise
+ */
+esp_err_t zigbee_core_update_soil_moisture(float moisture_percent);
+
+/**
+ * @brief Update soil temperature attribute
+ * @param temp_celsius Temperature in Celsius
+ * @return ESP_OK on success, error code otherwise
+ */
+esp_err_t zigbee_core_update_soil_temperature(float temp_celsius);
+
 #endif // ZIGBEE_CORE_H
 

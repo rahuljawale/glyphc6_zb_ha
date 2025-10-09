@@ -22,9 +22,10 @@
 #define NEOPIXEL_I2C_POWER      GPIO_NUM_20     // Power for NeoPixel and I2C
 #define NEOPIXEL_PIN            GPIO_NUM_9      // NeoPixel (shared with boot button)
 
-// I2C Configuration (STEMMA QT connector)
-#define I2C_SDA_PIN             GPIO_NUM_19
-#define I2C_SCL_PIN             GPIO_NUM_18
+// I2C Configuration (STEMMA QT connector - GLINK Port)
+// Per Glyph C6 documentation: I2C0 SDA=GPIO4, SCL=GPIO5
+#define I2C_SDA_PIN             GPIO_NUM_4      // SDA on GLINK port
+#define I2C_SCL_PIN             GPIO_NUM_5      // SCL on GLINK port
 #define I2C_MASTER_NUM          I2C_NUM_0
 #define I2C_MASTER_FREQ_HZ      100000          // 100kHz
 #define I2C_MASTER_TX_BUF_DISABLE 0
@@ -47,6 +48,29 @@
 #define ADC_A3                  GPIO_NUM_5      // Shared with IO5
 #define ADC_A4                  GPIO_NUM_3
 #define ADC_A5                  GPIO_NUM_4
+
+// ============================================================================
+// SOIL SENSOR CONFIGURATION (Adafruit STEMMA Soil Sensor)
+// ============================================================================
+
+// Adafruit 4026 Soil Sensor (Seesaw-based)
+#define SOIL_SENSOR_ADDR        0x36              // I2C address
+#define SOIL_SENSOR_ENABLED     true              // Enable soil monitoring
+
+// Calibration values (from Adafruit specs)
+#define SOIL_VALUE_DRY          200               // In air (completely dry)
+#define SOIL_VALUE_WET          2000              // Submerged in water
+
+// Moisture thresholds (0-100%)
+#define SOIL_MOISTURE_CRITICAL  20.0f             // Below this = critical (needs water NOW)
+#define SOIL_MOISTURE_LOW       35.0f             // Below this = low (water soon)
+#define SOIL_MOISTURE_GOOD      65.0f             // Above this = good (happy plant)
+#define SOIL_MOISTURE_HIGH      85.0f             // Above this = too wet (don't water)
+
+// Sampling Configuration
+#define SOIL_READ_INTERVAL      60000             // 60 seconds between readings
+#define SOIL_TASK_STACK         4096              // Stack size for soil task
+#define SOIL_TASK_PRIORITY      4                 // Task priority
 
 // ============================================================================
 // BATTERY MONITORING CONFIGURATION (from Glyph C6 schematic)
