@@ -1,8 +1,10 @@
-# ESP-IDF Partition Table with Core Dump Support
+# ESP-IDF Partition Table with OTA Support
 # Name, Type, SubType, Offset, Size, Flags
 nvs,      data, nvs,     0x9000,  0x6000,
 phy_init, data, phy,     0xf000,  0x1000,
-factory,  app,  factory, 0x10000, 0x100000,
-coredump, data, coredump, 0x110000, 64K,
-zb_storage, data, fat,   0x120000, 16K,
-zb_fct, data, fat,       0x130000, 1K,
+otadata,  data, ota,     0x10000, 0x2000,
+ota_0,    app,  ota_0,   0x20000, 0x180000,
+ota_1,    app,  ota_1,   0x1A0000, 0x180000,
+coredump, data, coredump, 0x320000, 64K,
+zb_storage, data, fat,   0x330000, 16K,
+zb_fct, data, fat,       0x340000, 1K,

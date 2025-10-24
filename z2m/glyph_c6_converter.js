@@ -19,10 +19,10 @@ const e = exposes.presets;
 const ea = exposes.access;
 
 const definition = {
-    zigbeeModel: ['GLYPH_C6_M1'],
-    model: 'GLYPH_C6_M1',
-    vendor: 'Custom',
-    description: 'Glyph C6 Zigbee Soil Monitor with LED Control',
+    zigbeeModel: ['PlantMonitor-C6'],
+    model: 'PlantMonitor-C6',
+    vendor: 'FloraTech',
+    description: 'Smart Zigbee Plant Monitor with Soil Moisture & Temperature',
     
     fromZigbee: [
         // LED On/Off control (0x0006 cluster)
@@ -125,63 +125,37 @@ const definition = {
     ],
     
     // Configure binding and reporting
-    configure: async (device, coordinatorEndpoint, logger) => {
+    configure: async (device, coordinatorEndpoint) => {
         const endpoint = device.getEndpoint(1);
         
-        try {
-            // Bind clusters
-            await reporting.bind(endpoint, coordinatorEndpoint, [
-                'genOnOff', 
-                'genPowerCfg', 
-                'msRelativeHumidity', 
-                'msTemperatureMeasurement'
-            ]);
-            logger.info('Glyph C6: Binding successful');
-            
-            // Try to configure reporting (may not be supported)
-            try {
-                await endpoint.configureReporting('genPowerCfg', [{
-                    attribute: 'batteryPercentageRemaining',
-                    minimumReportInterval: 60,     // 1 minute min
-                    maximumReportInterval: 3600,   // 1 hour max
-                    reportableChange: 20,          // 10% change (0-200 scale)
-                }]);
-                logger.info('Glyph C6: Battery percentage reporting configured');
-            } catch (e) {
-                logger.warn('Glyph C6: Could not configure battery percentage reporting: ' + e.message);
-            }
-            
-            try {
-                await endpoint.configureReporting('genPowerCfg', [{
-                    attribute: 'batteryVoltage',
-                    minimumReportInterval: 60,
-                    maximumReportInterval: 3600,
-                    reportableChange: 2,
-                }]);
-                logger.info('Glyph C6: Battery voltage reporting configured');
-            } catch (e) {
-                logger.warn('Glyph C6: Could not configure battery voltage reporting: ' + e.message);
-            }
-            
-            // Read initial states
-            await endpoint.read('genOnOff', ['onOff']);
-            await endpoint.read('genPowerCfg', ['batteryPercentageRemaining', 'batteryVoltage']);
-            
-            // Read soil sensor states
-            try {
-                await endpoint.read('msRelativeHumidity', ['measuredValue']);
-                await endpoint.read('msTemperatureMeasurement', ['measuredValue']);
-                logger.info('Glyph C6: Soil sensor states read successfully');
-            } catch (e) {
-                logger.warn('Glyph C6: Could not read soil sensor states: ' + e.message);
-            }
-            
-            logger.info('Glyph C6: Initial states read successfully');
-            
-        } catch (error) {
-            logger.error('Failed to configure Glyph C6: ' + error);
-            throw error;
-        }
+        // Bind clusters
+        await reporting.bind(endpoint, coordinatorEndpoint, [
+            'genOnOff', 
+            'genPowerCfg', 
+            'msRelativeHumidity', 
+            'msTemperatureMeasurement'
+        ]);
+        
+        // Configure reporting
+        await endpoint.configureReporting('genPowerCfg', [{
+            attribute: 'batteryPercentageRemaining',
+            minimumReportInterval: 14400,  // 4 hours min
+            maximumReportInterval: 43200,  // 12 hours max
+            reportableChange: 20,          // 10% change (0-200 scale)
+        }]);
+        
+        await endpoint.configureReporting('genPowerCfg', [{
+            attribute: 'batteryVoltage',
+            minimumReportInterval: 14400,  // 4 hours min
+            maximumReportInterval: 43200,  // 12 hours max
+            reportableChange: 2,
+        }]);
+        
+        // Read initial states
+        await endpoint.read('genOnOff', ['onOff']);
+        await endpoint.read('genPowerCfg', ['batteryPercentageRemaining', 'batteryVoltage']);
+        await endpoint.read('msRelativeHumidity', ['measuredValue']);
+        await endpoint.read('msTemperatureMeasurement', ['measuredValue']);
     },
     
     endpoint: (device) => {

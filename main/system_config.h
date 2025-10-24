@@ -57,9 +57,11 @@
 #define SOIL_SENSOR_ADDR        0x36              // I2C address
 #define SOIL_SENSOR_ENABLED     true              // Enable soil monitoring
 
-// Calibration values (from Adafruit specs)
-#define SOIL_VALUE_DRY          200               // In air (completely dry)
-#define SOIL_VALUE_WET          2000              // Submerged in water
+// Calibration values (FINAL - based on physical sensor limits)
+// Measured: Air = 329 raw, Pure water = 1015 raw, Watered soil = 951-1013 raw
+// Calibrated to physical maximum with small headroom
+#define SOIL_VALUE_DRY          329               // Sensor in air (completely dry)
+#define SOIL_VALUE_WET          1050              // Physical sensor maximum (saturated soil/water)
 
 // Moisture thresholds (0-100%)
 #define SOIL_MOISTURE_CRITICAL  20.0f             // Below this = critical (needs water NOW)
@@ -109,8 +111,23 @@
 // ============================================================================
 
 // Device Information
-#define ESP_MANUFACTURER_NAME    "\x09""ESPRESSIF"
-#define ESP_MODEL_IDENTIFIER     "\x0B""GLYPH_C6_M1"  // Glyph C6 Monitor v1
+#define ESP_MANUFACTURER_NAME    "\x09""FloraTech"     // Your custom manufacturer
+#define ESP_MODEL_IDENTIFIER     "\x0F""PlantMonitor-C6"  // Generic model name
+
+// Firmware Version (for OTA and identification)
+// ⚠️ SINGLE SOURCE OF TRUTH - Update ONLY these values ⚠️
+#define FIRMWARE_VERSION         0x00010000            // Version 1.0.0 (0xMMMMNNPP)
+#define FIRMWARE_VERSION_STRING  "1.0.0-ds+20251020"   // Semantic version + variant + build date
+#define FIRMWARE_BUILD_DATE      "2025-10-20"          // Human readable build date
+
+// Helper macro to calculate string length at compile time
+#define STRINGIZE(x) #x
+#define STRLEN(s) (sizeof(s) - 1)
+#define VERSION_STRING_LEN  STRLEN(FIRMWARE_VERSION_STRING)
+
+// Zigbee requires length-prefixed strings for attributes
+// This macro creates the proper format: \xLENGTH"string"
+#define ZIGBEE_STRING_ATTR(s) {(sizeof(s) - 1), s}
 
 // Zigbee Network Configuration
 #define INSTALLCODE_POLICY_ENABLE false
@@ -119,8 +136,23 @@
 #define HA_ESP_SENSOR_ENDPOINT  1                 // Main endpoint
 #define ESP_ZB_PRIMARY_CHANNEL_MASK ESP_ZB_TRANSCEIVER_ALL_CHANNELS_MASK
 
-// Reporting Intervals
+// Reporting Intervals (for always-on mode)
 #define ZIGBEE_REPORT_INTERVAL  30000             // 30 seconds between reports
+
+// ============================================================================
+// DEEP SLEEP CONFIGURATION
+// ============================================================================
+
+// Enable/disable deep sleep mode (set to 1 for battery operation)
+#define DEEP_SLEEP_ENABLED      0                 // 0=always-on, 1=deep sleep
+
+// Deep sleep intervals (when DEEP_SLEEP_ENABLED=1)
+#define DEEP_SLEEP_INTERVAL_SEC 3600              // 1 hour (3600 seconds)
+#define DEEP_SLEEP_WAKE_TIME_MS 60000             // Stay awake for 1 minute
+
+// Expected battery life with deep sleep (1-hour readings)
+// 1000mAh battery: ~2-3 months (24 wake cycles/day)
+// 2500mAh battery: ~6-8 months
 
 // ============================================================================
 // TASK CONFIGURATION

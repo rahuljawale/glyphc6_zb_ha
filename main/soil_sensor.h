@@ -37,9 +37,10 @@ typedef enum {
  * 
  * Performs I2C check and soft reset of sensor
  * 
+ * @param bus_handle I2C master bus handle (from i2c_new_master_bus)
  * @return ESP_OK on success, ESP_FAIL if sensor not found
  */
-esp_err_t soil_sensor_init(void);
+esp_err_t soil_sensor_init(void *bus_handle);
 
 /**
  * @brief Read soil moisture (capacitance)
@@ -60,22 +61,15 @@ esp_err_t soil_sensor_read_moisture(uint16_t *raw_value, float *percent);
 esp_err_t soil_sensor_read_temperature(float *temp_c, float *temp_f);
 
 /**
- * @brief Read all sensor data at once
+ * @brief Read all sensor data at once (performs fresh I2C reads)
+ * 
+ * This function directly reads from the sensor hardware.
+ * Suitable for deep sleep mode where sensors are read on-demand.
  * 
  * @param data Pointer to soil_data_t structure
  * @return ESP_OK on success
  */
 esp_err_t soil_sensor_read_all(soil_data_t *data);
-
-/**
- * @brief Get cached sensor data (thread-safe)
- * 
- * Returns the last successful reading without performing I2C transaction
- * 
- * @param data Pointer to soil_data_t structure
- * @return ESP_OK if valid data available
- */
-esp_err_t soil_sensor_get_cached_data(soil_data_t *data);
 
 /**
  * @brief Determine moisture status based on thresholds
@@ -92,22 +86,6 @@ soil_status_t soil_sensor_get_status(float percent);
  * @return String representation with emoji
  */
 const char* soil_sensor_status_string(soil_status_t status);
-
-/**
- * @brief Start soil monitoring task
- * 
- * Creates FreeRTOS task that reads sensor every SOIL_READ_INTERVAL
- * 
- * @return ESP_OK on success
- */
-esp_err_t soil_sensor_start_task(void);
-
-/**
- * @brief Stop soil monitoring task
- * 
- * @return ESP_OK on success
- */
-esp_err_t soil_sensor_stop_task(void);
 
 /**
  * @brief Check if soil sensor is present on I2C bus

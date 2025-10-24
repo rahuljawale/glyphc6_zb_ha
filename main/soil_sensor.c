@@ -1,17 +1,19 @@
 /*
  * Adafruit STEMMA Soil Sensor (4026) Driver Implementation
+ * Simplified for deep sleep mode - direct reads only, no background tasks
  */
 
 #include "soil_sensor.h"
 #include "system_config.h"
-#include "zigbee_core.h"
-#include "driver/i2c.h"
+#include "driver/i2c_master.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "freertos/semphr.h"
 
 static const char *TAG = "SOIL_SENSOR";
+
+// I2C device handle
+static i2c_master_dev_handle_t i2c_dev_handle = NULL;
 
 // Seesaw protocol registers
 #define SEESAW_STATUS_BASE          0x00
@@ -22,93 +24,62 @@ static const char *TAG = "SOIL_SENSOR";
 #define SEESAW_TOUCH_BASE           0x0F
 #define SEESAW_TOUCH_CHANNEL_OFFSET 0x10
 
-// Cached data and mutex
-static soil_data_t cached_data = {0};
-static SemaphoreHandle_t data_mutex = NULL;
-static TaskHandle_t soil_task_handle = NULL;
+// Sensor state
 static bool sensor_initialized = false;
 
 /**
- * @brief Write command to Seesaw sensor
+ * @brief Write command to Seesaw sensor (new I2C master API)
  */
 static esp_err_t seesaw_write_cmd(uint8_t base, uint8_t func)
 {
-    i2c_cmd_handle_t cmd = i2c_cmd_link_create();
-    i2c_master_start(cmd);
-    i2c_master_write_byte(cmd, (SOIL_SENSOR_ADDR << 1) | I2C_MASTER_WRITE, true);
-    i2c_master_write_byte(cmd, base, true);
-    i2c_master_write_byte(cmd, func, true);
-    i2c_master_stop(cmd);
-    
-    esp_err_t ret = i2c_master_cmd_begin(I2C_MASTER_NUM, cmd, pdMS_TO_TICKS(I2C_MASTER_TIMEOUT_MS));
-    i2c_cmd_link_delete(cmd);
-    
-    return ret;
+    uint8_t write_buf[2] = {base, func};
+    return i2c_master_transmit(i2c_dev_handle, write_buf, sizeof(write_buf), I2C_MASTER_TIMEOUT_MS);
 }
 
 /**
- * @brief Write command with data to Seesaw sensor
+ * @brief Write command with data to Seesaw sensor (new I2C master API)
  */
 static esp_err_t seesaw_write_cmd_data(uint8_t base, uint8_t func, uint8_t data)
 {
-    i2c_cmd_handle_t cmd = i2c_cmd_link_create();
-    i2c_master_start(cmd);
-    i2c_master_write_byte(cmd, (SOIL_SENSOR_ADDR << 1) | I2C_MASTER_WRITE, true);
-    i2c_master_write_byte(cmd, base, true);
-    i2c_master_write_byte(cmd, func, true);
-    i2c_master_write_byte(cmd, data, true);
-    i2c_master_stop(cmd);
-    
-    esp_err_t ret = i2c_master_cmd_begin(I2C_MASTER_NUM, cmd, pdMS_TO_TICKS(I2C_MASTER_TIMEOUT_MS));
-    i2c_cmd_link_delete(cmd);
-    
-    return ret;
+    uint8_t write_buf[3] = {base, func, data};
+    return i2c_master_transmit(i2c_dev_handle, write_buf, sizeof(write_buf), I2C_MASTER_TIMEOUT_MS);
 }
 
 /**
- * @brief Read data from Seesaw sensor
+ * @brief Read data from Seesaw sensor (new I2C master API)
  */
 static esp_err_t seesaw_read_data(uint8_t *buffer, size_t len)
 {
-    i2c_cmd_handle_t cmd = i2c_cmd_link_create();
-    i2c_master_start(cmd);
-    i2c_master_write_byte(cmd, (SOIL_SENSOR_ADDR << 1) | I2C_MASTER_READ, true);
-    
-    if (len > 1) {
-        i2c_master_read(cmd, buffer, len - 1, I2C_MASTER_ACK);
-    }
-    i2c_master_read_byte(cmd, buffer + len - 1, I2C_MASTER_NACK);
-    i2c_master_stop(cmd);
-    
-    esp_err_t ret = i2c_master_cmd_begin(I2C_MASTER_NUM, cmd, pdMS_TO_TICKS(I2C_MASTER_TIMEOUT_MS));
-    i2c_cmd_link_delete(cmd);
-    
-    return ret;
+    return i2c_master_receive(i2c_dev_handle, buffer, len, I2C_MASTER_TIMEOUT_MS);
 }
 
 // Initialize sensor
-esp_err_t soil_sensor_init(void)
+esp_err_t soil_sensor_init(void *bus_handle)
 {
     ESP_LOGI(TAG, "Initializing Adafruit Soil Sensor...");
     
-    // Create mutex for thread safety
-    if (data_mutex == NULL) {
-        data_mutex = xSemaphoreCreateMutex();
-        if (data_mutex == NULL) {
-            ESP_LOGE(TAG, "Failed to create mutex");
-            return ESP_FAIL;
-        }
+    if (bus_handle == NULL) {
+        ESP_LOGE(TAG, "Invalid bus handle");
+        return ESP_FAIL;
     }
     
-    // Check if sensor is present
-    if (!soil_sensor_is_present()) {
-        ESP_LOGE(TAG, "Soil sensor not found at address 0x%02X", SOIL_SENSOR_ADDR);
+    // Create I2C device handle (new API)
+    i2c_device_config_t dev_cfg = {
+        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+        .device_address = SOIL_SENSOR_ADDR,
+        .scl_speed_hz = 100000,  // 100kHz
+    };
+    
+    // Add device to the I2C bus (bus_handle passed from main.c)
+    esp_err_t ret = i2c_master_bus_add_device((i2c_master_bus_handle_t)bus_handle, &dev_cfg, &i2c_dev_handle);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to add I2C device: %s", esp_err_to_name(ret));
         return ESP_FAIL;
     }
     
     // Perform soft reset
     ESP_LOGI(TAG, "Performing soft reset...");
-    esp_err_t ret = seesaw_write_cmd_data(SEESAW_STATUS_BASE, SEESAW_STATUS_SWRST, 0xFF);
+    ret = seesaw_write_cmd_data(SEESAW_STATUS_BASE, SEESAW_STATUS_SWRST, 0xFF);
     if (ret != ESP_OK) {
         ESP_LOGW(TAG, "Soft reset failed (may be expected): %s", esp_err_to_name(ret));
     }
@@ -116,10 +87,6 @@ esp_err_t soil_sensor_init(void)
     // Wait longer for sensor to fully boot and stabilize
     ESP_LOGI(TAG, "Waiting for sensor to stabilize...");
     vTaskDelay(pdMS_TO_TICKS(1000));
-    
-    // Initialize cached data
-    cached_data.valid = false;
-    cached_data.timestamp = 0;
     
     sensor_initialized = true;
     ESP_LOGI(TAG, "Soil sensor initialized successfully");
@@ -204,7 +171,7 @@ esp_err_t soil_sensor_read_temperature(float *temp_c, float *temp_f)
     return ESP_OK;
 }
 
-// Read all data
+// Read all data (performs fresh I2C reads)
 esp_err_t soil_sensor_read_all(soil_data_t *data)
 {
     if (!data) {
@@ -231,35 +198,8 @@ esp_err_t soil_sensor_read_all(soil_data_t *data)
     }
     
     temp_data.valid = true;
-    
-    // Update cached data (thread-safe)
-    if (xSemaphoreTake(data_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-        cached_data = temp_data;
-        xSemaphoreGive(data_mutex);
-    }
-    
     *data = temp_data;
     return ESP_OK;
-}
-
-// Get cached data
-esp_err_t soil_sensor_get_cached_data(soil_data_t *data)
-{
-    if (!data) {
-        return ESP_ERR_INVALID_ARG;
-    }
-    
-    if (xSemaphoreTake(data_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-        *data = cached_data;
-        xSemaphoreGive(data_mutex);
-        
-        if (!cached_data.valid) {
-            return ESP_FAIL;
-        }
-        return ESP_OK;
-    }
-    
-    return ESP_FAIL;
 }
 
 // Get moisture status
@@ -292,108 +232,18 @@ const char* soil_sensor_status_string(soil_status_t status)
     }
 }
 
-// Soil monitoring task
-static void soil_monitoring_task(void *pvParameters)
-{
-    ESP_LOGI(TAG, "Soil monitoring task started");
-    
-    soil_data_t data;
-    int consecutive_failures = 0;
-    
-    while (1) {
-        // Read all sensor data
-        esp_err_t ret = soil_sensor_read_all(&data);
-        
-        if (ret == ESP_OK && data.valid) {
-            consecutive_failures = 0;  // Reset failure counter
-            soil_status_t status = soil_sensor_get_status(data.moisture_percent);
-            
-            ESP_LOGI(TAG, "📊 Soil Reading:");
-            ESP_LOGI(TAG, "   Moisture: %d raw (%.1f%%) - %s",
-                     data.moisture_raw, data.moisture_percent,
-                     soil_sensor_status_string(status));
-            ESP_LOGI(TAG, "   Temperature: %.1f°C (%.1f°F)",
-                     data.temperature_c, data.temperature_f);
-            
-            // Report to Zigbee/Home Assistant if network is joined
-            if (zigbee_core_is_joined()) {
-                zigbee_core_update_soil_moisture(data.moisture_percent);
-                zigbee_core_update_soil_temperature(data.temperature_c);
-                ESP_LOGI(TAG, "   → Reported to Zigbee/Z2M");
-            }
-        } else {
-            consecutive_failures++;
-            ESP_LOGW(TAG, "Failed to read soil sensor (failure #%d)", consecutive_failures);
-            
-            // Try to recover after 3 consecutive failures
-            if (consecutive_failures >= 3) {
-                ESP_LOGW(TAG, "Multiple failures detected, attempting sensor reset...");
-                
-                // Try soft reset
-                esp_err_t reset_ret = seesaw_write_cmd_data(SEESAW_STATUS_BASE, SEESAW_STATUS_SWRST, 0xFF);
-                if (reset_ret == ESP_OK) {
-                    ESP_LOGI(TAG, "Sensor reset successful, waiting 1s...");
-                    vTaskDelay(pdMS_TO_TICKS(1000));
-                    consecutive_failures = 0;  // Reset counter after recovery attempt
-                } else {
-                    ESP_LOGE(TAG, "Sensor reset failed: %s", esp_err_to_name(reset_ret));
-                }
-            }
-        }
-        
-        // Wait for next reading
-        vTaskDelay(pdMS_TO_TICKS(SOIL_READ_INTERVAL));
-    }
-}
-
-// Start monitoring task
-esp_err_t soil_sensor_start_task(void)
-{
-    if (soil_task_handle != NULL) {
-        ESP_LOGW(TAG, "Soil monitoring task already running");
-        return ESP_OK;
-    }
-    
-    BaseType_t ret = xTaskCreate(
-        soil_monitoring_task,
-        "soil_mon",
-        SOIL_TASK_STACK,
-        NULL,
-        SOIL_TASK_PRIORITY,
-        &soil_task_handle
-    );
-    
-    if (ret != pdPASS) {
-        ESP_LOGE(TAG, "Failed to create soil monitoring task");
-        return ESP_FAIL;
-    }
-    
-    ESP_LOGI(TAG, "Soil monitoring task created (reads every %d seconds)", SOIL_READ_INTERVAL / 1000);
-    return ESP_OK;
-}
-
-// Stop monitoring task
-esp_err_t soil_sensor_stop_task(void)
-{
-    if (soil_task_handle != NULL) {
-        vTaskDelete(soil_task_handle);
-        soil_task_handle = NULL;
-        ESP_LOGI(TAG, "Soil monitoring task stopped");
-    }
-    return ESP_OK;
-}
-
-// Check if sensor is present
+// Check if sensor is present (new I2C master API)
 bool soil_sensor_is_present(void)
 {
-    i2c_cmd_handle_t cmd = i2c_cmd_link_create();
-    i2c_master_start(cmd);
-    i2c_master_write_byte(cmd, (SOIL_SENSOR_ADDR << 1) | I2C_MASTER_WRITE, true);
-    i2c_master_stop(cmd);
+    // Note: This requires the device handle to be initialized first
+    // Now done via probe in soil_sensor_init()
+    if (i2c_dev_handle == NULL) {
+        return false;
+    }
     
-    esp_err_t ret = i2c_master_cmd_begin(I2C_MASTER_NUM, cmd, pdMS_TO_TICKS(I2C_MASTER_TIMEOUT_MS));
-    i2c_cmd_link_delete(cmd);
-    
-    return (ret == ESP_OK);
+    // Simple probe by attempting to read a byte
+    uint8_t dummy;
+    esp_err_t ret = i2c_master_receive(i2c_dev_handle, &dummy, 1, 100);
+    return (ret == ESP_OK || ret == ESP_ERR_TIMEOUT); // Sensor present if we get any response
 }
 

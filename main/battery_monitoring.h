@@ -23,24 +23,19 @@
 esp_err_t battery_monitoring_init(void);
 
 /**
- * @brief Start battery monitoring task
- * Reads battery voltage periodically and updates cache
+ * @brief Read battery voltage and calculate percentage (direct ADC read)
  * 
- * @return ESP_OK on success
- */
-esp_err_t battery_monitoring_start_task(void);
-
-/**
- * @brief Get cached battery data (thread-safe)
+ * This function directly reads from the ADC hardware.
+ * Suitable for deep sleep mode where sensors are read on-demand.
  * 
  * @param voltage Output: battery voltage in volts
  * @param percentage Output: battery percentage (0-100%)
- * @return true if cache is valid, false if stale
+ * @return ESP_OK on success, ESP_FAIL on ADC read error
  */
-bool battery_get_cached_data(float *voltage, float *percentage);
+esp_err_t battery_read(float *voltage, float *percentage);
 
 /**
- * @brief Detect if USB power is present
+ * @brief Detect if USB power is present (performs direct ADC read)
  * Uses battery voltage behavior to infer charging status
  * 
  * @return true if USB power detected (charging or full)

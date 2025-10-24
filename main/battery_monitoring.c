@@ -1,5 +1,6 @@
 /*
  * Glyph C6 - Battery Monitoring Module Implementation
+ * Simplified for deep sleep mode - direct reads only, no background tasks
  * 
  * Version: 1.0.0
  * 
@@ -14,7 +15,6 @@
 #include "esp_adc/adc_cali_scheme.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "freertos/semphr.h"
 #include <math.h>
 
 static const char *TAG = "BATTERY_MON";
@@ -26,17 +26,6 @@ static const char *TAG = "BATTERY_MON";
 // ADC handles
 static adc_oneshot_unit_handle_t adc_handle = NULL;
 static adc_cali_handle_t adc_cali_handle = NULL;
-
-// Battery data cache (protected by mutex)
-static struct {
-    float voltage;
-    float percentage;
-    uint32_t last_update;
-    bool valid;
-} battery_cache = {0};
-
-static SemaphoreHandle_t battery_mutex = NULL;
-static TaskHandle_t battery_task_handle = NULL;
 
 // ============================================================================
 // PRIVATE FUNCTIONS
@@ -127,39 +116,6 @@ static esp_err_t read_battery_voltage(float *voltage)
     return ESP_OK;
 }
 
-/**
- * @brief Battery monitoring task
- * Reads battery periodically and updates cache
- */
-static void battery_monitoring_task(void *param)
-{
-    ESP_LOGI(TAG, "Battery monitoring task started");
-    
-    while (1) {
-        float voltage = 0.0f;
-        esp_err_t ret = read_battery_voltage(&voltage);
-        
-        if (ret == ESP_OK && voltage > 0.0f) {
-            float percentage = voltage_to_percentage(voltage);
-            
-            // Update cache (thread-safe)
-            if (xSemaphoreTake(battery_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-                battery_cache.voltage = voltage;
-                battery_cache.percentage = percentage;
-                battery_cache.last_update = xTaskGetTickCount();
-                battery_cache.valid = true;
-                xSemaphoreGive(battery_mutex);
-                
-                ESP_LOGI(TAG, "Battery: %.2fV, %.1f%%", voltage, percentage);
-            }
-        } else {
-            ESP_LOGW(TAG, "Failed to read battery voltage");
-        }
-        
-        vTaskDelay(pdMS_TO_TICKS(BATTERY_READ_INTERVAL));
-    }
-}
-
 // ============================================================================
 // PUBLIC FUNCTIONS
 // ============================================================================
@@ -167,13 +123,6 @@ static void battery_monitoring_task(void *param)
 esp_err_t battery_monitoring_init(void)
 {
     ESP_LOGI(TAG, "Initializing battery monitoring (GPIO0/A0, ADC1_CH0)...");
-    
-    // Create mutex
-    battery_mutex = xSemaphoreCreateMutex();
-    if (!battery_mutex) {
-        ESP_LOGE(TAG, "Failed to create mutex");
-        return ESP_ERR_NO_MEM;
-    }
     
     // Configure ADC
     adc_oneshot_unit_init_cfg_t adc_config = {
@@ -217,54 +166,22 @@ esp_err_t battery_monitoring_init(void)
     return ESP_OK;
 }
 
-esp_err_t battery_monitoring_start_task(void)
+esp_err_t battery_read(float *voltage, float *percentage)
 {
-    if (battery_task_handle != NULL) {
-        ESP_LOGW(TAG, "Battery monitoring task already running");
-        return ESP_OK;
+    if (!voltage || !percentage) {
+        return ESP_ERR_INVALID_ARG;
     }
     
-    BaseType_t ret = xTaskCreate(
-        battery_monitoring_task,
-        "battery_mon",
-        BATTERY_TASK_STACK,
-        NULL,
-        BATTERY_TASK_PRIORITY,
-        &battery_task_handle
-    );
-    
-    if (ret != pdPASS) {
-        ESP_LOGE(TAG, "Failed to create battery monitoring task");
-        return ESP_FAIL;
+    // Read voltage directly from ADC
+    esp_err_t ret = read_battery_voltage(voltage);
+    if (ret != ESP_OK) {
+        return ret;
     }
     
-    ESP_LOGI(TAG, "Battery monitoring task started");
+    // Convert to percentage
+    *percentage = voltage_to_percentage(*voltage);
+    
     return ESP_OK;
-}
-
-bool battery_get_cached_data(float *voltage, float *percentage)
-{
-    if (!voltage || !percentage || !battery_mutex) {
-        return false;
-    }
-    
-    bool valid = false;
-    
-    if (xSemaphoreTake(battery_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-        *voltage = battery_cache.voltage;
-        *percentage = battery_cache.percentage;
-        valid = battery_cache.valid;
-        
-        // Check if data is stale (> 2 minutes old)
-        uint32_t age_ms = (xTaskGetTickCount() - battery_cache.last_update) * portTICK_PERIOD_MS;
-        if (age_ms > (BATTERY_READ_INTERVAL * 4)) {
-            valid = false;
-        }
-        
-        xSemaphoreGive(battery_mutex);
-    }
-    
-    return valid;
 }
 
 bool battery_is_usb_present(void)
@@ -272,7 +189,8 @@ bool battery_is_usb_present(void)
     float voltage = 0.0f;
     float percentage = 0.0f;
     
-    if (!battery_get_cached_data(&voltage, &percentage)) {
+    // Read directly from ADC
+    if (battery_read(&voltage, &percentage) != ESP_OK) {
         return false;  // Unknown state
     }
     

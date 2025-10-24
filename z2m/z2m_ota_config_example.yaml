@@ -1,0 +1,31 @@
+# Add this to your Zigbee2MQTT configuration.yaml
+
+# OTA Updates Configuration
+ota:
+  # Disable automatic update checks (we'll trigger manually)
+  disable_automatic_update_check: false
+  
+  # Optional: Use local OTA files instead of online index
+  # zigbee_ota_override_index_location: /app/data/ota/index.json
+
+advanced:
+  # Log level for debugging OTA
+  log_level: info
+  
+  # Network settings
+  network_key: GENERATE  # Your existing key
+  pan_id: GENERATE       # Your existing PAN ID
+  
+  # Last 20 seen devices (helps with OTA discovery)
+  last_seen: ISO_8601
+
+# External converters
+external_converters:
+  - glyph_c6_converter.js
+
+# Frontend configuration (if using built-in frontend)
+frontend:
+  port: 8080
+
+
+

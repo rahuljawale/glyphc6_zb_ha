@@ -13,6 +13,7 @@
 #include "esp_zigbee_attribute.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include <string.h>  // For strlen, strcpy
 
 // Define missing Power Config cluster attribute IDs (not in ESP Zigbee SDK headers)
 #ifndef ESP_ZB_ZCL_ATTR_POWER_CONFIG_BATTERY_PERCENTAGE_REMAINING_ID
@@ -284,6 +285,17 @@ esp_zb_cluster_list_t *zigbee_core_create_sensor_clusters(
     ESP_ERROR_CHECK(esp_zb_basic_cluster_add_attr(basic_cluster, 
         ESP_ZB_ZCL_ATTR_BASIC_MODEL_IDENTIFIER_ID, ESP_MODEL_IDENTIFIER));
     
+    // Add firmware version (SW Build ID attribute)
+    // Uses FIRMWARE_VERSION_STRING from system_config.h (single source of truth)
+    // Zigbee string format: [length_byte][string_data]
+    uint8_t version_len = (uint8_t)strlen(FIRMWARE_VERSION_STRING);
+    char sw_build_id[64];  // Buffer for length + string
+    sw_build_id[0] = version_len;
+    strcpy(&sw_build_id[1], FIRMWARE_VERSION_STRING);
+    
+    ESP_ERROR_CHECK(esp_zb_basic_cluster_add_attr(basic_cluster,
+        ESP_ZB_ZCL_ATTR_BASIC_SW_BUILD_ID, sw_build_id));
+    
     ESP_ERROR_CHECK(esp_zb_cluster_list_add_basic_cluster(cluster_list, basic_cluster, 
         ESP_ZB_ZCL_CLUSTER_SERVER_ROLE));
     
@@ -367,7 +379,23 @@ esp_zb_cluster_list_t *zigbee_core_create_sensor_clusters(
             ESP_ZB_ZCL_CLUSTER_SERVER_ROLE));
     }
     
-    ESP_LOGI(TAG, "All clusters created successfully (Basic, Identify, PowerConfig, OnOff, Temperature, Humidity)");
+    // OTA Upgrade cluster (client role - device requests updates from coordinator)
+    esp_zb_ota_cluster_cfg_t ota_cfg = {
+        .ota_upgrade_file_version = FIRMWARE_VERSION,  // Current firmware version from config
+        .ota_upgrade_downloaded_file_ver = 0xFFFFFFFF,
+        .ota_upgrade_manufacturer = 0x1234,      // FloraTech manufacturer code
+        .ota_upgrade_image_type = 0x0000,
+    };
+    esp_zb_attribute_list_t *ota_cluster = esp_zb_ota_cluster_create(&ota_cfg);
+    if (!ota_cluster) {
+        ESP_LOGW(TAG, "Failed to create OTA cluster");
+    } else {
+        ESP_ERROR_CHECK(esp_zb_cluster_list_add_ota_cluster(cluster_list, ota_cluster, 
+            ESP_ZB_ZCL_CLUSTER_CLIENT_ROLE));
+        ESP_LOGI(TAG, "OTA cluster added (client role) - firmware updates enabled");
+    }
+    
+    ESP_LOGI(TAG, "All clusters created successfully (Basic, Identify, PowerConfig, OnOff, Temperature, Humidity, OTA)");
     return cluster_list;
 }
 
